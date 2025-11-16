@@ -1164,13 +1164,9 @@ export default function GraphVisualization({
         style={{ height: "100%", width: "100%", minHeight: "400px" }}
         settings={{
           renderEdgeLabels: false,
-          renderEdges: true,
           defaultNodeColor: "#57534e",
           defaultEdgeColor: "#60a5faDD",
           defaultEdgeType: "line",
-          minEdgeSize: 0.5,
-          maxEdgeSize: 3,
-          edgeColor: "#60a5faDD",
           labelSize: 12,
           labelWeight: "bold",
           labelColor: { color: "#1c1917" },
