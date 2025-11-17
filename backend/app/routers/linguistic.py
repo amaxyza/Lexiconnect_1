@@ -1574,11 +1574,16 @@ async def get_morpheme_graph_data(
         }
 
         # Find the morpheme and related data
-        lang_filter = "AND m.language = $language" if language else ""
+        # Search in both surface_form and citation_form fields (case-insensitive)
+        if language:
+            lang_filter = "AND m.language = $language"
+        else:
+            lang_filter = ""
 
         cypher_query = f"""
-        MATCH (m:Morpheme {{form: $morpheme}})
-        WHERE 1=1 {lang_filter}
+        MATCH (m:Morpheme)
+        WHERE (toLower(m.surface_form) = toLower($morpheme) OR toLower(m.citation_form) = toLower($morpheme))
+        {lang_filter}
         
         // Get glosses for this morpheme
         OPTIONAL MATCH (m)<-[:ANALYZES]-(g:Gloss)
@@ -1631,7 +1636,12 @@ async def get_morpheme_graph_data(
         # Add target morpheme
         if target_morpheme:
             morpheme_id = str(target_morpheme.get("ID"))
-            morpheme_form = target_morpheme.get("form", morpheme)
+            # Use surface_form or citation_form for the label
+            morpheme_form = (
+                target_morpheme.get("surface_form")
+                or target_morpheme.get("citation_form")
+                or morpheme
+            )
             nodes.append(
                 {
                     "id": morpheme_id,
@@ -1649,10 +1659,17 @@ async def get_morpheme_graph_data(
             if gloss_node:
                 gloss_id = str(gloss_node.get("ID"))
                 if gloss_id not in node_id_set:
+                    # Glosses might have "annotation", "value", or "gloss" property
+                    gloss_label = (
+                        gloss_node.get("annotation")
+                        or gloss_node.get("value")
+                        or gloss_node.get("gloss")
+                        or ""
+                    )
                     nodes.append(
                         {
                             "id": gloss_id,
-                            "label": gloss_node.get("value", ""),
+                            "label": gloss_label,
                             "type": "Gloss",
                             "color": node_colors["Gloss"],
                             "size": node_sizes["Gloss"],
@@ -1759,7 +1776,8 @@ async def get_morpheme_graph_data(
         # Add hierarchical edges (need to query for these)
         # Get edges for the context hierarchy
         context_edges_query = """
-        MATCH (m:Morpheme {form: $morpheme})
+        MATCH (m:Morpheme)
+        WHERE (toLower(m.surface_form) = toLower($morpheme) OR toLower(m.citation_form) = toLower($morpheme))
         OPTIONAL MATCH (w:Word)-[:WORD_MADE_OF]->(m)
         WITH m, collect(DISTINCT w)[0..10] as words
         UNWIND words as word
@@ -1771,37 +1789,37 @@ async def get_morpheme_graph_data(
 
         edge_result = db.run(context_edges_query, morpheme=morpheme)
         for edge_record in edge_result:
-            text_id: Optional[str] = (
+            edge_text_id: Optional[str] = (
                 str(edge_record.get("text_id")) if edge_record.get("text_id") else None
             )
-            section_id: Optional[str] = (
+            edge_section_id: Optional[str] = (
                 str(edge_record.get("section_id"))
                 if edge_record.get("section_id")
                 else None
             )
-            phrase_id: Optional[str] = (
+            edge_phrase_id: Optional[str] = (
                 str(edge_record.get("phrase_id"))
                 if edge_record.get("phrase_id")
                 else None
             )
-            word_id: Optional[str] = (
+            edge_word_id: Optional[str] = (
                 str(edge_record.get("word_id")) if edge_record.get("word_id") else None
             )
 
             # Add edges if both nodes exist
             if (
-                text_id
-                and section_id
-                and text_id in node_id_set
-                and section_id in node_id_set
+                edge_text_id
+                and edge_section_id
+                and edge_text_id in node_id_set
+                and edge_section_id in node_id_set
             ):
-                edge_id = f"{text_id}-section-{section_id}"
+                edge_id = f"{edge_text_id}-section-{edge_section_id}"
                 if not any(e["id"] == edge_id for e in edges):
                     edges.append(
                         {
                             "id": edge_id,
-                            "source": text_id,
-                            "target": section_id,
+                            "source": edge_text_id,
+                            "target": edge_section_id,
                             "type": "SECTION_PART_OF_TEXT",
                             "color": "#60a5fa",
                             "size": 2,
@@ -1809,18 +1827,18 @@ async def get_morpheme_graph_data(
                     )
 
             if (
-                section_id
-                and phrase_id
-                and section_id in node_id_set
-                and phrase_id in node_id_set
+                edge_section_id
+                and edge_phrase_id
+                and edge_section_id in node_id_set
+                and edge_phrase_id in node_id_set
             ):
-                edge_id = f"{section_id}-phrase-{phrase_id}"
+                edge_id = f"{edge_section_id}-phrase-{edge_phrase_id}"
                 if not any(e["id"] == edge_id for e in edges):
                     edges.append(
                         {
                             "id": edge_id,
-                            "source": section_id,
-                            "target": phrase_id,
+                            "source": edge_section_id,
+                            "target": edge_phrase_id,
                             "type": "PHRASE_IN_SECTION",
                             "color": "#60a5fa",
                             "size": 2,
@@ -1828,18 +1846,18 @@ async def get_morpheme_graph_data(
                     )
 
             if (
-                phrase_id
-                and word_id
-                and phrase_id in node_id_set
-                and word_id in node_id_set
+                edge_phrase_id
+                and edge_word_id
+                and edge_phrase_id in node_id_set
+                and edge_word_id in node_id_set
             ):
-                edge_id = f"{phrase_id}-word-{word_id}"
+                edge_id = f"{edge_phrase_id}-word-{edge_word_id}"
                 if not any(e["id"] == edge_id for e in edges):
                     edges.append(
                         {
                             "id": edge_id,
-                            "source": phrase_id,
-                            "target": word_id,
+                            "source": edge_phrase_id,
+                            "target": edge_word_id,
                             "type": "PHRASE_COMPOSED_OF",
                             "color": "#60a5fa",
                             "size": 2,
