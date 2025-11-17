@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from "react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
 interface ConcordanceResult {
   target: string;
   left_context: string[];
@@ -37,7 +35,7 @@ export default function SearchBar({ onSearchResults, onVisualizeWord }: SearchBa
 
     setIsSearching(true);
     try {
-      const response = await fetch(`${API_URL}/api/v1/linguistic/concordance`, {
+      const response = await fetch(`/api/v1/linguistic/concordance`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

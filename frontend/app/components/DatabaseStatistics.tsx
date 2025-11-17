@@ -27,8 +27,7 @@ export default function DatabaseStatistics() {
     }
     setError(null);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const response = await fetch(`${apiUrl}/api/v1/linguistic/stats`);
+      const response = await fetch(`/api/v1/linguistic/stats`);
       if (!response.ok) {
         throw new Error("Failed to fetch statistics");
       }

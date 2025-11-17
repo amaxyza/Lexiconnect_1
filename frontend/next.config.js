@@ -2,8 +2,8 @@
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
-  // Removed rewrites to allow direct client-side API calls
-  // The frontend will use NEXT_PUBLIC_API_URL directly
+  // API proxying is handled by Next.js API Routes in app/api/v1/[[...path]]/route.ts
+  // This allows Vercel deployment to proxy HTTPS -> HTTP backend requests
 };
 
 module.exports = nextConfig;

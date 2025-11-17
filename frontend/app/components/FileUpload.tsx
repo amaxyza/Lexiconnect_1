@@ -2,8 +2,6 @@
 
 import { useState, useCallback } from "react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
 interface FileUploadProps {
   onUploadSuccess?: (data: any) => void;
   onUploadError?: (error: string) => void;
@@ -99,8 +97,8 @@ export default function FileUpload({
 
       const isFlextext = selectedFile.name.endsWith(".flextext");
       const endpoint = isFlextext
-        ? `${API_URL}/api/v1/linguistic/upload-flextext`
-        : `${API_URL}/api/v1/linguistic/upload-elan`;
+        ? `/api/v1/linguistic/upload-flextext`
+        : `/api/v1/linguistic/upload-elan`;
 
       const response = await fetch(endpoint, {
         method: "POST",
