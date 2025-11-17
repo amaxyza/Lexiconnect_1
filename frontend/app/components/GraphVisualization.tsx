@@ -210,28 +210,58 @@ function applyWordLayout(graph: MultiDirectedGraph) {
     nodesByType[t].push(id);
   });
 
-  // Horizontal spacing between nodes of the same type
-  const horizontalSpacing = 150;
-  // Vertical spacing between different types
-  const verticalSpacing = 100;
+  const wordCount = (nodesByType["Word"] || []).length;
+  const hasMultipleWords = wordCount > 1;
 
-  typeOrder.forEach((type, levelIndex) => {
-    const nodes = nodesByType[type] || [];
-    if (!nodes.length) return;
-
-    // Calculate total width needed for this level
-    const totalWidth = (nodes.length - 1) * horizontalSpacing;
-    // Start from negative half of total width to center the nodes
-    const startX = -totalWidth / 2;
-    // Y position based on level
-    const y = levelIndex * verticalSpacing;
-
-    nodes.forEach((nodeId, i) => {
-      const x = startX + i * horizontalSpacing;
-      graph.setNodeAttribute(nodeId, "x", x);
-      graph.setNodeAttribute(nodeId, "y", y);
+  // For morpheme visualization, use hierarchical sunburst layout
+  if (hasMultipleWords) {
+    // Level 1: Morpheme at center (innermost)
+    const morphemes = nodesByType["Morpheme"] || [];
+    morphemes.forEach((nodeId) => {
+      graph.setNodeAttribute(nodeId, "x", 0);
+      graph.setNodeAttribute(nodeId, "y", 0);
     });
-  });
+
+    // Level 2: Glosses in inner ring around morpheme
+    const glosses = nodesByType["Gloss"] || [];
+    const glossRadius = 200;
+    glosses.forEach((nodeId, i) => {
+      const angle = (2 * Math.PI * i) / Math.max(glosses.length, 1);
+      graph.setNodeAttribute(nodeId, "x", glossRadius * Math.cos(angle));
+      graph.setNodeAttribute(nodeId, "y", glossRadius * Math.sin(angle));
+    });
+
+    // Level 3: Words in outer ring (outermost)
+    const words = nodesByType["Word"] || [];
+    const wordRadius = 500;
+    words.forEach((nodeId, i) => {
+      const angle = (2 * Math.PI * i) / words.length;
+      graph.setNodeAttribute(nodeId, "x", wordRadius * Math.cos(angle));
+      graph.setNodeAttribute(nodeId, "y", wordRadius * Math.sin(angle));
+    });
+  } else {
+    // Original horizontal layout for single word visualization
+    const horizontalSpacing = 150;
+    const verticalSpacing = 100;
+
+    typeOrder.forEach((type, levelIndex) => {
+      const nodes = nodesByType[type] || [];
+      if (!nodes.length) return;
+
+      // Calculate total width needed for this level
+      const totalWidth = (nodes.length - 1) * horizontalSpacing;
+      // Start from negative half of total width to center the nodes
+      const startX = -totalWidth / 2;
+      // Y position based on level
+      const y = levelIndex * verticalSpacing;
+
+      nodes.forEach((nodeId, i) => {
+        const x = startX + i * horizontalSpacing;
+        graph.setNodeAttribute(nodeId, "x", x);
+        graph.setNodeAttribute(nodeId, "y", y);
+      });
+    });
+  }
 }
 
 // Apply radial layout: nodes grouped by type in concentric rings
@@ -309,9 +339,11 @@ function buildGraphFromData(data: any, isWordVisualization: boolean = false) {
       } else if (node.type === "Word") {
         dynamicSize = Math.max(dynamicSize, 8);
       } else if (node.type === "Morpheme") {
-        dynamicSize = Math.max(dynamicSize, 5);
+        // In word visualization, make morphemes larger
+        dynamicSize = Math.max(dynamicSize, isWordVisualization ? 8 : 5);
       } else if (node.type === "Gloss") {
-        dynamicSize = Math.max(dynamicSize, 6);
+        // Match gloss size to morpheme size for consistent label visibility
+        dynamicSize = Math.max(dynamicSize, isWordVisualization ? 8 : 6);
       }
 
       // Determine label: use sequential ID for Section nodes, otherwise use node.label
@@ -487,20 +519,20 @@ function buildGraphFromData(data: any, isWordVisualization: boolean = false) {
     const baseSettings = forceAtlas2.inferSettings(graph);
 
     if (isWordVisualization) {
-      // Very gentle force layout for word visualization to maintain horizontal structure
+      // Minimal force layout to maintain sunburst structure
       forceAtlas2.assign(graph, {
-        iterations: 20, // fewer iterations to keep layout stable
+        iterations: 10, // very few iterations to keep sunburst clean
         settings: {
           ...baseSettings,
-          gravity: 0.01, // minimal gravity
-          scalingRatio: 5, // reduced spread
+          gravity: 0.005, // extremely minimal gravity
+          scalingRatio: 2, // minimal spread
           strongGravityMode: false,
           barnesHutOptimize: true,
-          slowDown: 20, // very slow movement
+          slowDown: 30, // very slow movement to preserve layout
           linLogMode: false,
           outboundAttractionDistribution: false,
           adjustSizes: false,
-          edgeWeightInfluence: 0.05, // minimal edge influence
+          edgeWeightInfluence: 0.01, // minimal edge influence
         },
       });
     } else {
@@ -592,10 +624,15 @@ function LoadGraph({
   return null;
 }
 
-function GraphEvents({ 
-  onNodeClick 
-}: { 
-  onNodeClick?: (node: { label: string; type: string; color: string; properties: Record<string, any> }) => void 
+function GraphEvents({
+  onNodeClick,
+}: {
+  onNodeClick?: (node: {
+    label: string;
+    type: string;
+    color: string;
+    properties: Record<string, any>;
+  }) => void;
 }) {
   const registerEvents = useRegisterEvents();
   const sigma = useSigma();
@@ -616,7 +653,7 @@ function GraphEvents({
       clickNode: (event) => {
         const nodeData = sigma.getGraph().getNodeAttributes(event.node);
         console.log("Clicked node:", event.node, nodeData);
-        
+
         // Call the callback with formatted node data
         if (onNodeClick) {
           onNodeClick({
@@ -1296,13 +1333,13 @@ export default function GraphVisualization({
           defaultNodeColor: "#57534e",
           defaultEdgeColor: "#60a5faDD",
           defaultEdgeType: "line",
-          labelSize: 12,
+          labelSize: searchWord ? 14 : 12,
           labelWeight: "bold",
           labelColor: { color: "#1c1917" },
-          // Show all labels when visualizing a word, otherwise only show large nodes
+          // Show all labels when visualizing a word/morpheme, otherwise only show large nodes
           labelRenderedSizeThreshold: searchWord ? 0 : 12,
-          labelDensity: searchWord ? 1 : 0.2,
-          labelGridCellSize: searchWord ? 200 : 100,
+          labelDensity: searchWord ? 1.5 : 0.2,
+          labelGridCellSize: searchWord ? 250 : 100,
           enableEdgeEvents: true,
           allowInvalidContainer: true,
           zIndex: true,

@@ -1581,29 +1581,30 @@ async def get_morpheme_graph_data(
             lang_filter = ""
 
         cypher_query = f"""
+        // Find all morpheme nodes matching the search term
         MATCH (m:Morpheme)
-        WHERE (toLower(m.surface_form) = toLower($morpheme) OR toLower(m.citation_form) = toLower($morpheme))
+        WHERE (toLower(m.surface_form) CONTAINS toLower($morpheme) 
+           OR toLower(m.citation_form) CONTAINS toLower($morpheme))
         {lang_filter}
         
-        // Get glosses for this morpheme
-        OPTIONAL MATCH (m)<-[:ANALYZES]-(g:Gloss)
+        WITH collect(DISTINCT m) as all_morphemes
         
-        WITH m, collect(DISTINCT g) as morpheme_glosses
+        // Take first morpheme as target
+        WITH all_morphemes[0] as target_morpheme, all_morphemes
         
-        // Get all words containing this morpheme (limit to avoid huge graphs)
+        // Get glosses for the target morpheme
+        OPTIONAL MATCH (target_morpheme)<-[:ANALYZES]-(g:Gloss)
+        WITH target_morpheme, all_morphemes, collect(DISTINCT g) as morpheme_glosses
+        
+        // Get all words containing ANY of these morphemes
+        UNWIND all_morphemes as m
         OPTIONAL MATCH (w:Word)-[:WORD_MADE_OF]->(m)
-        WITH m, morpheme_glosses, collect(DISTINCT w) as related_words
+        WITH target_morpheme, morpheme_glosses, collect(DISTINCT w) as related_words
         
-        // Get context for the first few words
-        UNWIND related_words[0..5] as word
-        OPTIONAL MATCH (t:Text)-[:SECTION_PART_OF_TEXT]->(s:Section)-[:PHRASE_IN_SECTION]->(ph:Phrase)-[:PHRASE_COMPOSED_OF]->(word)
-        
-        RETURN m as target_morpheme,
+        // Return just the essential data for sunburst visualization
+        RETURN target_morpheme,
                morpheme_glosses,
-               related_words,
-               collect(DISTINCT t) as texts,
-               collect(DISTINCT s) as sections,
-               collect(DISTINCT ph) as phrases
+               related_words
         """
 
         result = db.run(cypher_query, morpheme=morpheme, language=language)
@@ -1622,13 +1623,13 @@ async def get_morpheme_graph_data(
         target_morpheme = record.get("target_morpheme")
         morpheme_glosses = record.get("morpheme_glosses", [])
         related_words = record.get("related_words", [])
-        texts = record.get("texts", [])
-        sections = record.get("sections", [])
-        phrases = record.get("phrases", [])
 
         logger.info(f"Found morpheme '{morpheme}'")
         logger.info(f"Related words: {len(related_words)}")
         logger.info(f"Glosses: {len(morpheme_glosses)}")
+        logger.info(
+            f"Sample related words: {[w.get('surface_form', 'N/A') for w in related_words[:5]]}"
+        )
 
         # Build nodes list
         node_id_set = set()
@@ -1690,8 +1691,9 @@ async def get_morpheme_graph_data(
                         }
                     )
 
-        # Add related words (limit to 10 to keep graph manageable)
-        for word_node in related_words[:10]:
+        # Add related words (show all up to 50)
+        logger.info(f"Adding {len(related_words[:50])} words to graph")
+        for word_node in related_words[:50]:
             if word_node:
                 word_id = str(word_node.get("ID"))
                 if word_id not in node_id_set:
@@ -1719,150 +1721,8 @@ async def get_morpheme_graph_data(
                         }
                     )
 
-        # Add context nodes (texts, sections, phrases)
-        for text_node in texts:
-            if text_node:
-                text_id = str(text_node.get("ID"))
-                if text_id not in node_id_set:
-                    nodes.append(
-                        {
-                            "id": text_id,
-                            "label": text_node.get("title", text_id),
-                            "type": "Text",
-                            "color": node_colors["Text"],
-                            "size": node_sizes["Text"],
-                            "properties": dict(text_node),
-                        }
-                    )
-                    node_id_set.add(text_id)
-
-        for section_node in sections:
-            if section_node:
-                section_id = str(section_node.get("ID"))
-                if section_id not in node_id_set:
-                    nodes.append(
-                        {
-                            "id": section_id,
-                            "label": section_node.get("segnum", section_id),
-                            "type": "Section",
-                            "color": node_colors["Section"],
-                            "size": node_sizes["Section"],
-                            "properties": dict(section_node),
-                        }
-                    )
-                    node_id_set.add(section_id)
-
-        for phrase_node in phrases:
-            if phrase_node:
-                phrase_id = str(phrase_node.get("ID"))
-                if phrase_id not in node_id_set:
-                    phrase_text = (
-                        phrase_node.get("text", "")[:30]
-                        if phrase_node.get("text")
-                        else phrase_id
-                    )
-                    nodes.append(
-                        {
-                            "id": phrase_id,
-                            "label": phrase_text,
-                            "type": "Phrase",
-                            "color": node_colors["Phrase"],
-                            "size": node_sizes["Phrase"],
-                            "properties": dict(phrase_node),
-                        }
-                    )
-                    node_id_set.add(phrase_id)
-
-        # Add hierarchical edges (need to query for these)
-        # Get edges for the context hierarchy
-        context_edges_query = """
-        MATCH (m:Morpheme)
-        WHERE (toLower(m.surface_form) = toLower($morpheme) OR toLower(m.citation_form) = toLower($morpheme))
-        OPTIONAL MATCH (w:Word)-[:WORD_MADE_OF]->(m)
-        WITH m, collect(DISTINCT w)[0..10] as words
-        UNWIND words as word
-        OPTIONAL MATCH (t:Text)-[:SECTION_PART_OF_TEXT]->(s:Section)
-        OPTIONAL MATCH (s)-[:PHRASE_IN_SECTION]->(ph:Phrase)
-        OPTIONAL MATCH (ph)-[:PHRASE_COMPOSED_OF]->(word)
-        RETURN t.ID as text_id, s.ID as section_id, ph.ID as phrase_id, word.ID as word_id
-        """
-
-        edge_result = db.run(context_edges_query, morpheme=morpheme)
-        for edge_record in edge_result:
-            edge_text_id: Optional[str] = (
-                str(edge_record.get("text_id")) if edge_record.get("text_id") else None
-            )
-            edge_section_id: Optional[str] = (
-                str(edge_record.get("section_id"))
-                if edge_record.get("section_id")
-                else None
-            )
-            edge_phrase_id: Optional[str] = (
-                str(edge_record.get("phrase_id"))
-                if edge_record.get("phrase_id")
-                else None
-            )
-            edge_word_id: Optional[str] = (
-                str(edge_record.get("word_id")) if edge_record.get("word_id") else None
-            )
-
-            # Add edges if both nodes exist
-            if (
-                edge_text_id
-                and edge_section_id
-                and edge_text_id in node_id_set
-                and edge_section_id in node_id_set
-            ):
-                edge_id = f"{edge_text_id}-section-{edge_section_id}"
-                if not any(e["id"] == edge_id for e in edges):
-                    edges.append(
-                        {
-                            "id": edge_id,
-                            "source": edge_text_id,
-                            "target": edge_section_id,
-                            "type": "SECTION_PART_OF_TEXT",
-                            "color": "#60a5fa",
-                            "size": 2,
-                        }
-                    )
-
-            if (
-                edge_section_id
-                and edge_phrase_id
-                and edge_section_id in node_id_set
-                and edge_phrase_id in node_id_set
-            ):
-                edge_id = f"{edge_section_id}-phrase-{edge_phrase_id}"
-                if not any(e["id"] == edge_id for e in edges):
-                    edges.append(
-                        {
-                            "id": edge_id,
-                            "source": edge_section_id,
-                            "target": edge_phrase_id,
-                            "type": "PHRASE_IN_SECTION",
-                            "color": "#60a5fa",
-                            "size": 2,
-                        }
-                    )
-
-            if (
-                edge_phrase_id
-                and edge_word_id
-                and edge_phrase_id in node_id_set
-                and edge_word_id in node_id_set
-            ):
-                edge_id = f"{edge_phrase_id}-word-{edge_word_id}"
-                if not any(e["id"] == edge_id for e in edges):
-                    edges.append(
-                        {
-                            "id": edge_id,
-                            "source": edge_phrase_id,
-                            "target": edge_word_id,
-                            "type": "PHRASE_COMPOSED_OF",
-                            "color": "#60a5fa",
-                            "size": 2,
-                        }
-                    )
+        # Skip context nodes (texts, sections, phrases) for simpler visualization
+        # Only show Words, Morpheme, and Glosses
 
         # Validate edges
         valid_edges = []
